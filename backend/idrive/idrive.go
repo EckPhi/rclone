@@ -29,9 +29,13 @@ func init() {
 		Name: "idrive", Description: "IDrive Cloud Drive (experimental)", NewFs: NewFs, Config: configure,
 		Options: []fs.Option{
 			{Name: config.ConfigEncoding, Help: config.ConfigEncodingHelp, Default: defaultEncoding, Advanced: true},
-			{Name: "endpoint", Hide: fs.OptionHideConfigurator, Help: "Cloud Drive HTTPS origin from your web session, for example https://evssyncweb63.idrive.com."},
-			{Name: "token", Hide: fs.OptionHideConfigurator, IsPassword: true, Sensitive: true, Help: "Cloud Drive token for manual access or the browser session cache."},
-			{Name: "access_token", Hide: fs.OptionHideConfigurator, IsPassword: true, Sensitive: true, Help: "Browser web access token used to renew Cloud Drive authorization."},
+			{Name: "endpoint", Advanced: true, Help: "Cloud Drive HTTPS origin from your web session, for example https://evssyncweb63.idrive.com."},
+			{Name: "token", Advanced: true, IsPassword: true, Sensitive: true, Help: "Cloud Drive token for manual access or the browser session cache."},
+			{Name: "access_token", IsPassword: true, Sensitive: true, Help: `IDrive web access token, not your account password.
+Sign in at https://www.idrive.com/app/webconsole/drive/all/ and unlock Cloud Drive.
+In browser DevTools -> Console run console.log(localStorage.getItem("Token")).
+Paste the printed token without quotes here. The endpoint is discovered automatically.
+For terminal setup, you may leave this blank to use the guided browser prompts.`},
 		},
 	})
 }
@@ -48,7 +52,34 @@ func saveSession(m configmap.Mapper) func(string, string, string) {
 
 func configure(ctx context.Context, name string, m configmap.Mapper, in fs.ConfigIn) (*fs.ConfigOut, error) {
 	switch in.State {
-	case "", "choose_auth":
+	case "":
+		// Static remote forms use automatic configuration and supply the visible options.
+		if fs.GetConfig(ctx).AutoConfirm {
+			if encoded, ok := m.Get("access_token"); ok && encoded != "" {
+				access, err := obscure.Reveal(encoded)
+				if err != nil {
+					return nil, errors.New("idrive: browser access token must be obscured")
+				}
+				out, err := finishBrowserConfig(ctx, m, access)
+				if out != nil && out.Error != "" {
+					return nil, errors.New(out.Error)
+				}
+				return out, err
+			}
+			endpoint, _ := m.Get("endpoint")
+			encoded, _ := m.Get("token")
+			if encoded != "" && endpoint != "" {
+				token, err := obscure.Reveal(encoded)
+				if err != nil {
+					return nil, errors.New("idrive: Cloud Drive token must be obscured")
+				}
+				_, err = api.NewClient(endpoint, token, nil)
+				return nil, err
+			}
+			return nil, errors.New("idrive: enter the web access token in access_token, or supply a manual endpoint and Cloud Drive token")
+		}
+		fallthrough
+	case "choose_auth":
 		return fs.ConfigChooseExclusiveFixed("auth_mode", "config_auth_mode", "Authorization method", []fs.OptionExample{{Value: "browser", Help: "Sign in with your browser and import session authorization"}, {Value: "manual", Help: "Enter a Cloud Drive endpoint and token manually"}})
 	case "auth_mode":
 		if in.Result == "manual" {

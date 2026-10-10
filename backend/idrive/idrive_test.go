@@ -235,3 +235,30 @@ func TestBrowserConfigurationLive(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestStaticRemoteConfiguration(t *testing.T) {
+	ri, err := fs.Find("idrive")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"access_token", "endpoint", "token"} {
+		option := ri.Options.Get(name)
+		if option == nil || option.Hide != 0 {
+			t.Fatalf("web UI field %s is hidden", name)
+		}
+		if name == "access_token" && (option.Advanced || !option.IsPassword || !option.Sensitive) {
+			t.Fatal("web token field must be visible and masked")
+		}
+	}
+	ctx, ci := fs.AddConfig(context.Background())
+	ci.AutoConfirm = true
+	if out, err := configure(ctx, "web-test", configmap.Simple{}, fs.ConfigIn{}); err == nil || out != nil {
+		t.Error("missing token opened interactive configuration")
+	}
+	if out, err := configure(ctx, "web-test", configmap.Simple{"access_token": obscure.MustObscure("invalid-token")}, fs.ConfigIn{}); err == nil || out != nil {
+		t.Error("invalid token opened interactive configuration")
+	}
+	if out, err := configure(ctx, "web-test", configmap.Simple{"endpoint": "https://test.example", "token": obscure.MustObscure("manual-token")}, fs.ConfigIn{}); err != nil || out != nil {
+		t.Error("static manual configuration failed")
+	}
+}

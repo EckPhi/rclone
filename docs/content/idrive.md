@@ -52,6 +52,16 @@ stay in the browser; rclone saves reusable session tokens.
 Rclone obscures saved tokens; use encrypted rclone configuration for stronger
 protection on disk.
 
+### Web UI configuration
+
+When creating an IDrive remote in rclone's web UI, paste the browser token into
+**access_token**. Obtain it with the same DevTools Console command above. The
+field is masked; enter the token, not your IDrive account password. Saving the
+remote discovers the endpoint and validates account access without terminal
+prompts. Manual **endpoint** and Cloud Drive **token** fields are available under
+advanced options. Restart rclone with an updated executable and reload the web
+UI after upgrading so it loads the new provider fields.
+
 Cloud Drive token failures trigger one synchronized renewal and one replay of
 the rejected request. Web access-token rotations are saved when returned by
 IDrive. This is a proprietary web session, not OAuth refresh-token authorization.
