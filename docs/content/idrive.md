@@ -7,6 +7,26 @@ This experimental backend accesses IDrive Cloud Drive (Sync storage) through
 the web console's private HTTP endpoints. IDrive e2 uses the S3 backend instead.
 IDrive Cloud Backup device folders are not supported by this backend.
 
+## Linux installation
+
+The fork's **IDrive Linux builds** GitHub Actions workflow produces downloadable
+archives for x86_64 (`amd64`) and ARM64 (`arm64`). Run `uname -m` on the target
+machine to choose the matching archive. Artifacts are retained for 30 days;
+rerun the workflow when a fresh build is needed.
+
+For x86_64, download `rclone-idrive-linux-amd64.tar.gz`, then run:
+
+```sh
+tar -xzf rclone-idrive-linux-amd64.tar.gz
+sha256sum -c SHA256SUMS
+install -Dm755 rclone-idrive ~/.local/bin/rclone-idrive
+~/.local/bin/rclone-idrive config
+```
+
+On ARM64, use `rclone-idrive-linux-arm64.tar.gz` instead. The executable is
+installed alongside existing rclone installations. For a remote or SSH setup,
+choose browser authorization and answer No to opening a browser on that machine.
+
 ## Configuration
 
 Use `rclone config` to create an `idrive` remote and choose browser authorization.
