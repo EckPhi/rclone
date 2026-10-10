@@ -1,0 +1,9 @@
+backend: idrive
+name: IDrive Cloud Drive (experimental)
+tier: Experimental
+virtual: false
+remote: 'TestIdrive:'
+features:
+- CanHaveEmptyDirectories
+hashes: []
+precision: 3153600000000000000
