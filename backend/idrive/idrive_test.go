@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -178,5 +179,59 @@ func TestDistinctUploadTimestamps(t *testing.T) {
 		if !uploaded {
 			t.Error("replacement was not uploaded")
 		}
+	}
+}
+
+func TestAuthorizationConfiguration(t *testing.T) {
+	ctx := context.Background()
+	m := configmap.Simple{}
+	out, err := configure(ctx, "test", m, fs.ConfigIn{})
+	if err != nil || out.State != "auth_mode" || out.Option.Name != "config_auth_mode" {
+		t.Fatal("missing authorization choice")
+	}
+	out, err = configure(ctx, "test", m, fs.ConfigIn{State: "browser_source", Result: "token"})
+	if err != nil || !out.Option.IsPassword || out.Option.Name != "config_access_token" {
+		t.Fatal("browser token prompt is not masked/ephemeral")
+	}
+	out, err = configure(ctx, "test", m, fs.ConfigIn{State: "browser_har", Result: "/notfound/idrive.har"})
+	if err != nil || out.Error == "" || out.State != "choose_auth" || len(m) != 0 {
+		t.Error("failed HAR import persisted credentials")
+	}
+	_, err = configure(ctx, "test", m, fs.ConfigIn{State: "manual_endpoint", Result: "https://test.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Set("access_token", obscure.MustObscure("old-browser-token"))
+	_, err = configure(ctx, "test", m, fs.ConfigIn{State: "manual_token", Result: obscure.MustObscure("manual-token")})
+	if err != nil || m["access_token"] != "" || obscure.MustReveal(m["token"]) != "manual-token" {
+		t.Error("manual reconnect retained browser authorization")
+	}
+}
+
+func TestBrowserConfigurationLive(t *testing.T) {
+	capture := os.Getenv("RCLONE_TEST_IDRIVE_HAR")
+	if capture == "" {
+		t.Skip("set RCLONE_TEST_IDRIVE_HAR for browser authorization validation")
+	}
+	m := configmap.Simple{}
+	out, err := configure(context.Background(), "browser-test", m, fs.ConfigIn{State: "browser_har", Result: capture})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != nil {
+		t.Fatalf("authorization did not finish: %s", out.Error)
+	}
+	if m["access_token"] == "" || m["token"] == "" || m["endpoint"] == "" {
+		t.Fatal("session was not persisted")
+	}
+	if _, ok := m["config_har"]; ok {
+		t.Fatal("HAR path persisted")
+	}
+	f, err := NewFs(context.Background(), "browser-test", "", m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.List(context.Background(), ""); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"path"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/rclone/rclone/fs/config/obscure"
 	"github.com/rclone/rclone/fs/hash"
 	"github.com/rclone/rclone/lib/encoder"
+	"github.com/rclone/rclone/lib/oauthutil"
 	"github.com/rclone/rclone/lib/readers"
 )
 
@@ -25,20 +27,119 @@ const defaultEncoding = encoder.EncodeSlash | encoder.EncodeWin | encoder.Encode
 
 func init() {
 	fs.Register(&fs.RegInfo{
-		Name: "idrive", Description: "IDrive Cloud Drive (experimental)", NewFs: NewFs,
+		Name: "idrive", Description: "IDrive Cloud Drive (experimental)", NewFs: NewFs, Config: configure,
 		Options: []fs.Option{
 			{Name: config.ConfigEncoding, Help: config.ConfigEncodingHelp, Default: defaultEncoding, Advanced: true},
-			{Name: "endpoint", Required: true, Help: "Cloud Drive HTTPS origin from your web session, for example https://evssyncweb63.idrive.com."},
-			{Name: "token", Required: true, IsPassword: true, Help: "Existing Cloud Drive web session token. Automatic login and token renewal are not implemented."},
+			{Name: "endpoint", Hide: fs.OptionHideConfigurator, Help: "Cloud Drive HTTPS origin from your web session, for example https://evssyncweb63.idrive.com."},
+			{Name: "token", Hide: fs.OptionHideConfigurator, IsPassword: true, Sensitive: true, Help: "Cloud Drive token for manual access or the browser session cache."},
+			{Name: "access_token", Hide: fs.OptionHideConfigurator, IsPassword: true, Sensitive: true, Help: "Browser web access token used to renew Cloud Drive authorization."},
 		},
 	})
 }
 
-// Options defines the existing web session used for access.
+func saveSession(m configmap.Mapper) func(string, string, string) {
+	return func(access, drive, endpoint string) {
+		m.Set("access_token", obscure.MustObscure(access))
+		if drive != "" {
+			m.Set("token", obscure.MustObscure(drive))
+		}
+		m.Set("endpoint", endpoint)
+	}
+}
+
+func configure(ctx context.Context, name string, m configmap.Mapper, in fs.ConfigIn) (*fs.ConfigOut, error) {
+	switch in.State {
+	case "", "choose_auth":
+		return fs.ConfigChooseExclusiveFixed("auth_mode", "config_auth_mode", "Authorization method", []fs.OptionExample{{Value: "browser", Help: "Sign in with your browser and import session authorization"}, {Value: "manual", Help: "Enter a Cloud Drive endpoint and token manually"}})
+	case "auth_mode":
+		if in.Result == "manual" {
+			return fs.ConfigInput("manual_endpoint", "config_endpoint", "Cloud Drive HTTPS server origin.")
+		}
+		if in.Result != "browser" {
+			return nil, errors.New("idrive: invalid authorization method")
+		}
+		if err := oauthutil.OpenURL("https://www.idrive.com/app/webconsole/drive/all/"); err != nil {
+			fs.Infof(nil, "Open https://www.idrive.com/app/webconsole/drive/all/ in your browser")
+		}
+		return fs.ConfigChooseExclusiveFixed("browser_source", "config_browser_source", "Import browser authorization", []fs.OptionExample{{Value: "har", Help: "Read a local HAR capture including sensitive headers"}, {Value: "token", Help: "Paste a web access token at a masked prompt"}})
+	case "browser_source":
+		if in.Result == "token" {
+			return fs.ConfigPassword("browser_token", "config_access_token", `In the signed-in IDrive Cloud Drive tab, open DevTools -> Console.
+Run copy(localStorage.getItem("Token")) to copy the web access token.
+Paste it here. It will not be displayed. Do not paste it into chat.`)
+		}
+		if in.Result != "har" {
+			return nil, errors.New("idrive: invalid browser import method")
+		}
+		return fs.ConfigInput("browser_har", "config_har", `Sign in to IDrive in your browser and unlock Cloud Drive if it uses a private key.
+Open DevTools -> Network, refresh Cloud Drive, then save a HAR including sensitive headers.
+Keep this file local: it contains account session credentials.
+Enter the absolute path to the HAR file.`)
+	case "browser_har":
+		file, err := os.Open(in.Result)
+		if err != nil {
+			return fs.ConfigError("choose_auth", "Could not open the local HAR file.")
+		}
+		access, err := api.ImportHAR(file)
+		_ = file.Close()
+		if err != nil {
+			return fs.ConfigError("choose_auth", err.Error())
+		}
+		return finishBrowserConfig(ctx, m, access)
+	case "browser_token":
+		access, err := obscure.Reveal(in.Result)
+		if err != nil {
+			return fs.ConfigError("choose_auth", "Could not read the browser access token.")
+		}
+		return finishBrowserConfig(ctx, m, access)
+
+	case "manual_endpoint":
+		m.Set("endpoint", in.Result)
+		return fs.ConfigPassword("manual_token", "config_token", "Cloud Drive token.")
+	case "manual_token":
+		token, err := obscure.Reveal(in.Result)
+		if err != nil {
+			return fs.ConfigError("choose_auth", "Could not read the Cloud Drive token.")
+		}
+		endpoint, _ := m.Get("endpoint")
+		if _, err = api.NewClient(endpoint, token, nil); err != nil {
+			return fs.ConfigError("choose_auth", err.Error())
+		}
+		m.Set("access_token", "")
+		m.Set("token", in.Result)
+		return nil, nil
+	}
+	return nil, errors.New("idrive: unknown configuration state")
+}
+
+func finishBrowserConfig(ctx context.Context, m configmap.Mapper, access string) (*fs.ConfigOut, error) {
+	var savedAccess, savedDrive, savedEndpoint string
+	session, err := api.NewSession(access, nil, func(a, d, e string) { savedAccess, savedDrive, savedEndpoint = a, d, e })
+	if err != nil {
+		return fs.ConfigError("choose_auth", err.Error())
+	}
+	endpoint, token, err := session.Credentials(ctx, "")
+	if err != nil {
+		return fs.ConfigError("choose_auth", err.Error())
+	}
+	client, err := api.NewClient(endpoint, token, nil)
+	if err != nil {
+		return nil, err
+	}
+	client.UseSession(session)
+	if _, err = client.List(ctx, "/"); err != nil {
+		return nil, err
+	}
+	saveSession(m)(savedAccess, savedDrive, savedEndpoint)
+	return nil, nil
+}
+
+// Options defines browser authorization and manual Cloud Drive access.
 type Options struct {
-	Enc      encoder.MultiEncoder `config:"encoding"`
-	Endpoint string               `config:"endpoint"`
-	Token    string               `config:"token"`
+	Enc         encoder.MultiEncoder `config:"encoding"`
+	Endpoint    string               `config:"endpoint"`
+	Token       string               `config:"token"`
+	AccessToken string               `config:"access_token"`
 }
 
 // Fs stores a Cloud Drive filesystem rooted at a remote directory.
@@ -57,17 +158,38 @@ type Object struct {
 	modTime time.Time
 }
 
-// NewFs constructs a filesystem using an existing web session.
+// NewFs constructs a filesystem using browser authorization or a manual token.
 func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, error) {
 	opt := Options{Enc: defaultEncoding}
 	if err := configstruct.Set(m, &opt); err != nil {
 		return nil, err
 	}
-	token, err := obscure.Reveal(opt.Token)
-	if err != nil {
-		return nil, errors.New("idrive: token must be obscured with rclone obscure")
+	var client *api.Client
+	var err error
+	if opt.AccessToken != "" {
+		access, e := obscure.Reveal(opt.AccessToken)
+		if e != nil {
+			return nil, errors.New("idrive: browser access token must be obscured")
+		}
+		session, e := api.NewSession(access, nil, saveSession(m))
+		if e != nil {
+			return nil, e
+		}
+		endpoint, token, e := session.Credentials(ctx, "")
+		if e != nil {
+			return nil, e
+		}
+		client, err = api.NewClient(endpoint, token, nil)
+		if err == nil {
+			client.UseSession(session)
+		}
+	} else {
+		token, e := obscure.Reveal(opt.Token)
+		if e != nil {
+			return nil, errors.New("idrive: token must be obscured with rclone obscure")
+		}
+		client, err = api.NewClient(opt.Endpoint, token, nil)
 	}
-	client, err := api.NewClient(opt.Endpoint, token, nil)
 	if err != nil {
 		return nil, err
 	}

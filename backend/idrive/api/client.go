@@ -30,6 +30,7 @@ type Client struct {
 	baseURL string
 	token   string
 	http    *http.Client
+	session *Session
 }
 
 // Entry is a file or directory returned by the Cloud Drive listing endpoint.
@@ -294,26 +295,77 @@ func (c *Client) Open(ctx context.Context, remotePath string) (io.ReadCloser, er
 	return resp.Body, nil
 }
 
+// UseSession enables synchronized browser-session token renewal.
+func (c *Client) UseSession(session *Session) { c.session = session }
+
 func (c *Client) request(req *http.Request) (*http.Response, error) {
-	resp, err := c.http.Do(req)
-	if err != nil {
-		if req.Context().Err() != nil {
-			return nil, req.Context().Err()
+	for attempt := 0; attempt < 2; attempt++ {
+		used := c.token
+		if c.session != nil {
+			endpoint, token, err := c.session.Credentials(req.Context(), "")
+			if err != nil {
+				return nil, err
+			}
+			used = token
+			origin, _ := url.Parse(endpoint)
+			req.URL.Scheme, req.URL.Host = origin.Scheme, origin.Host
+			if req.URL.Query().Has("x-auth-token") {
+				query := req.URL.Query()
+				query.Set("x-auth-token", token)
+				req.URL.RawQuery = query.Encode()
+			} else {
+				req.Header.Set("x-auth-token", token)
+			}
 		}
-		// net/http errors include the request URL, which may contain the token.
-		return nil, errors.New("idrive: HTTP request failed")
+		resp, err := c.http.Do(req)
+		if err != nil {
+			if req.Context().Err() != nil {
+				return nil, req.Context().Err()
+			}
+			return nil, errors.New("idrive: HTTP request failed")
+		}
+		unauthorized := resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden
+		if c.session != nil && resp.Header.Get("Content-Disposition") == "" && (req.URL.Path != "/evs/v2/downloadFile" || strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "application/json")) {
+			data, readErr := io.ReadAll(io.LimitReader(resp.Body, (32<<20)+1))
+			_ = resp.Body.Close()
+			if readErr != nil || len(data) > 32<<20 {
+				return nil, errors.New("idrive: invalid API response or response larger than 32 MiB")
+			}
+			resp.Body = io.NopCloser(bytes.NewReader(data))
+			var reply struct{ Desc string }
+			if json.Unmarshal(data, &reply) == nil && errors.Is(replyError(reply.Desc), ErrUnauthorized) {
+				unauthorized = true
+			}
+		}
+		if unauthorized {
+			_ = resp.Body.Close()
+			if c.session == nil || attempt != 0 {
+				return nil, ErrUnauthorized
+			}
+			if _, _, err := c.session.Credentials(req.Context(), used); err != nil {
+				return nil, err
+			}
+			if req.Body != nil {
+				if req.GetBody == nil {
+					return nil, errors.New("idrive: cannot replay request after authorization renewal")
+				}
+				req.Body, err = req.GetBody()
+				if err != nil {
+					return nil, errors.New("idrive: cannot replay request body")
+				}
+			}
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusNotFound {
+				return nil, ErrNotFound
+			}
+			return nil, fmt.Errorf("idrive: HTTP status %d", resp.StatusCode)
+		}
+		return resp, nil
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		_ = resp.Body.Close()
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			return nil, ErrUnauthorized
-		}
-		if resp.StatusCode == http.StatusNotFound {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("idrive: HTTP status %d", resp.StatusCode)
-	}
-	return resp, nil
+	return nil, ErrUnauthorized
 }
 
 func replyError(desc string) error {
