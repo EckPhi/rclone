@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"os"
 	"path"
 	"strconv"
 	"strings"
@@ -58,34 +57,19 @@ func configure(ctx context.Context, name string, m configmap.Mapper, in fs.Confi
 		if in.Result != "browser" {
 			return nil, errors.New("idrive: invalid authorization method")
 		}
-		if err := oauthutil.OpenURL("https://www.idrive.com/app/webconsole/drive/all/"); err != nil {
-			fs.Infof(nil, "Open https://www.idrive.com/app/webconsole/drive/all/ in your browser")
+		return fs.ConfigConfirm("browser_open", true, "config_browser_local", "Open the browser on this machine? Choose No when configuring over SSH or on a server.")
+	case "browser_open":
+		if in.Result == "true" {
+			_ = oauthutil.OpenURL("https://www.idrive.com/app/webconsole/drive/all/")
 		}
-		return fs.ConfigChooseExclusiveFixed("browser_source", "config_browser_source", "Import browser authorization", []fs.OptionExample{{Value: "har", Help: "Read a local HAR capture including sensitive headers"}, {Value: "token", Help: "Paste a web access token at a masked prompt"}})
-	case "browser_source":
-		if in.Result == "token" {
-			return fs.ConfigPassword("browser_token", "config_access_token", `In the signed-in IDrive Cloud Drive tab, open DevTools -> Console.
-Run copy(localStorage.getItem("Token")) to copy the web access token.
-Paste it here. It will not be displayed. Do not paste it into chat.`)
-		}
-		if in.Result != "har" {
-			return nil, errors.New("idrive: invalid browser import method")
-		}
-		return fs.ConfigInput("browser_har", "config_har", `Sign in to IDrive in your browser and unlock Cloud Drive if it uses a private key.
-Open DevTools -> Network, refresh Cloud Drive, then save a HAR including sensitive headers.
-Keep this file local: it contains account session credentials.
-Enter the absolute path to the HAR file.`)
-	case "browser_har":
-		file, err := os.Open(in.Result)
-		if err != nil {
-			return fs.ConfigError("choose_auth", "Could not open the local HAR file.")
-		}
-		access, err := api.ImportHAR(file)
-		_ = file.Close()
-		if err != nil {
-			return fs.ConfigError("choose_auth", err.Error())
-		}
-		return finishBrowserConfig(ctx, m, access)
+		return fs.ConfigPassword("browser_token", "config_access_token", `On a machine with a browser, open:
+https://www.idrive.com/app/webconsole/drive/all/
+Sign in and unlock Cloud Drive if it uses a private key.
+In DevTools -> Console run:
+console.log(localStorage.getItem("Token"))
+Copy the printed token without quotes and paste it here, including when this
+rclone prompt is running over SSH. It will not be displayed.
+If the result is null, finish signing in and open Cloud Drive, then try again.`)
 	case "browser_token":
 		access, err := obscure.Reveal(in.Result)
 		if err != nil {

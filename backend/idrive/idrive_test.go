@@ -189,13 +189,13 @@ func TestAuthorizationConfiguration(t *testing.T) {
 	if err != nil || out.State != "auth_mode" || out.Option.Name != "config_auth_mode" {
 		t.Fatal("missing authorization choice")
 	}
-	out, err = configure(ctx, "test", m, fs.ConfigIn{State: "browser_source", Result: "token"})
+	out, err = configure(ctx, "test", m, fs.ConfigIn{State: "browser_open", Result: "false"})
 	if err != nil || !out.Option.IsPassword || out.Option.Name != "config_access_token" {
 		t.Fatal("browser token prompt is not masked/ephemeral")
 	}
-	out, err = configure(ctx, "test", m, fs.ConfigIn{State: "browser_har", Result: "/notfound/idrive.har"})
+	out, err = configure(ctx, "test", m, fs.ConfigIn{State: "browser_token", Result: obscure.MustObscure("invalid-token")})
 	if err != nil || out.Error == "" || out.State != "choose_auth" || len(m) != 0 {
-		t.Error("failed HAR import persisted credentials")
+		t.Error("failed token import persisted credentials")
 	}
 	_, err = configure(ctx, "test", m, fs.ConfigIn{State: "manual_endpoint", Result: "https://test.example"})
 	if err != nil {
@@ -209,12 +209,12 @@ func TestAuthorizationConfiguration(t *testing.T) {
 }
 
 func TestBrowserConfigurationLive(t *testing.T) {
-	capture := os.Getenv("RCLONE_TEST_IDRIVE_HAR")
-	if capture == "" {
-		t.Skip("set RCLONE_TEST_IDRIVE_HAR for browser authorization validation")
+	token := os.Getenv("RCLONE_TEST_IDRIVE_ACCESS_TOKEN")
+	if token == "" {
+		t.Skip("set RCLONE_TEST_IDRIVE_ACCESS_TOKEN for browser authorization validation")
 	}
 	m := configmap.Simple{}
-	out, err := configure(context.Background(), "browser-test", m, fs.ConfigIn{State: "browser_har", Result: capture})
+	out, err := configure(context.Background(), "browser-test", m, fs.ConfigIn{State: "browser_token", Result: obscure.MustObscure(token)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,8 +224,8 @@ func TestBrowserConfigurationLive(t *testing.T) {
 	if m["access_token"] == "" || m["token"] == "" || m["endpoint"] == "" {
 		t.Fatal("session was not persisted")
 	}
-	if _, ok := m["config_har"]; ok {
-		t.Fatal("HAR path persisted")
+	if _, ok := m["config_access_token"]; ok {
+		t.Fatal("ephemeral input persisted")
 	}
 	f, err := NewFs(context.Background(), "browser-test", "", m)
 	if err != nil {

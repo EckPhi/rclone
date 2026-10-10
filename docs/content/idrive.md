@@ -10,20 +10,23 @@ IDrive Cloud Backup device folders are not supported by this backend.
 ## Configuration
 
 Use `rclone config` to create an `idrive` remote and choose browser authorization.
-Rclone opens the official Cloud Drive page. Sign in there and complete any MFA,
-captcha, or private-key unlock in the browser. Then choose either:
+Choose whether to open a browser on the machine running rclone. For SSH or
+remote installations, choose No and open the printed Cloud Drive URL on your
+own computer. Sign in and complete any MFA, captcha, or private-key unlock in
+the browser. In DevTools -> Console run:
 
-- **HAR import:** open DevTools -> Network, refresh Cloud Drive, and export a
-  local HAR including sensitive headers. Enter its absolute path in rclone.
-  In Chrome/Edge, enable DevTools Settings -> Preferences -> Network ->
-  "Allow to generate HAR with sensitive data" first.
-- **Masked token prompt:** in the signed-in tab's DevTools Console run
-  `copy(localStorage.getItem("Token"))`, then paste at rclone's masked prompt.
+```javascript
+console.log(localStorage.getItem("Token"))
+```
+
+Copy the printed token without quotes and paste it at rclone's masked prompt.
+Alternatively, `copy(localStorage.getItem("Token"))` copies it directly to the
+clipboard in browsers that support the DevTools `copy` helper. If the result
+is `null`, finish signing in and open Cloud Drive before trying again.
 
 Setup discovers the storage server, obtains a Cloud Drive token, and validates
 access with a root listing. The account password and private encryption key
-stay in the browser; rclone saves reusable session tokens. HAR captures contain
-credentials and must remain local. After import, the capture is no longer needed.
+stay in the browser; rclone saves reusable session tokens.
 Rclone obscures saved tokens; use encrypted rclone configuration for stronger
 protection on disk.
 

@@ -181,23 +181,11 @@ func TestSessionFailureBoundsAndSanitization(t *testing.T) {
 	}
 }
 
-func TestHARImportAndServerValidation(t *testing.T) {
-	valid := testAccess("evsweb63.idrivesync.com")
-	har, _ := json.Marshal(map[string]any{"log": map[string]any{"entries": []any{map[string]any{"request": map[string]any{"url": "https://www.idrive.com/auth/test", "headers": []any{map[string]string{"name": "Authorization", "value": "Bearer " + valid}}}}}}})
-	got, err := ImportHAR(strings.NewReader(string(har)))
-	if err != nil || got != valid {
-		t.Fatal("valid HAR rejected")
-	}
+func TestServerValidation(t *testing.T) {
 	for _, server := range []string{"evil.example", "https://evssyncweb63.idrive.com@evil.example", "https://evssyncweb63.idrive.com:443", "https://evssyncweb63.idrive.com/path", "evssyncweb63.idrive.com.evil.example"} {
 		if _, err := NewSession(testAccess(server), nil, nil); err == nil {
 			t.Errorf("accepted untrusted server %s", server)
 		}
-	}
-	if _, err := ImportHAR(strings.NewReader(strings.ReplaceAll(string(har), "www.idrive.com", "evil.example"))); err == nil {
-		t.Error("imported bearer token from unrelated host")
-	}
-	if _, err := ImportHAR(strings.NewReader(`{"log":{"entries":[]}}`)); err == nil {
-		t.Error("accepted missing token")
 	}
 }
 
