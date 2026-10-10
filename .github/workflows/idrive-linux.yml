@@ -44,8 +44,9 @@ jobs:
           GOARCH: ${{ matrix.arch }}
         run: |
           mkdir -p package dist
-          go build -trimpath -ldflags "-s -w -X github.com/rclone/rclone/fs.Version=idrive-${GITHUB_SHA:0:12}" -o package/rclone-idrive .
+          go build -trimpath -ldflags "-s -w -X github.com/rclone/rclone/fs.VersionSuffix=idrive.g${GITHUB_SHA:0:12}-DEV" -o package/rclone-idrive .
           package/rclone-idrive version
+          package/rclone-idrive rc --loopback core/version
           package/rclone-idrive help backends | grep -F 'idrive'
       - name: Package Linux installation
         env:
