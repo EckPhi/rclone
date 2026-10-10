@@ -190,8 +190,8 @@ func TestAuthorizationConfiguration(t *testing.T) {
 		t.Fatal("missing authorization choice")
 	}
 	out, err = configure(ctx, "test", m, fs.ConfigIn{State: "browser_open", Result: "false"})
-	if err != nil || !out.Option.IsPassword || out.Option.Name != "config_access_token" {
-		t.Fatal("browser token prompt is not masked/ephemeral")
+	if err != nil || !out.Option.IsPassword || !out.Option.Required || out.Option.Name != "config_access_token" {
+		t.Fatal("browser token prompt is not required/masked/ephemeral")
 	}
 	out, err = configure(ctx, "test", m, fs.ConfigIn{State: "browser_token", Result: obscure.MustObscure("invalid-token")})
 	if err != nil || out.Error == "" || out.State != "choose_auth" || len(m) != 0 {

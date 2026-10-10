@@ -39,7 +39,9 @@ the browser. In DevTools -> Console run:
 console.log(localStorage.getItem("Token"))
 ```
 
-Copy the printed token without quotes and paste it at rclone's masked prompt.
+Copy the printed token without quotes. Rclone calls its masked input a password:
+choose **y** and paste the same token at both password prompts. Enter the token,
+not your IDrive account password; do not generate a random password.
 Alternatively, `copy(localStorage.getItem("Token"))` copies it directly to the
 clipboard in browsers that support the DevTools `copy` helper. If the result
 is `null`, finish signing in and open Cloud Drive before trying again.

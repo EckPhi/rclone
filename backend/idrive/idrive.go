@@ -62,7 +62,11 @@ func configure(ctx context.Context, name string, m configmap.Mapper, in fs.Confi
 		if in.Result == "true" {
 			_ = oauthutil.OpenURL("https://www.idrive.com/app/webconsole/drive/all/")
 		}
-		return fs.ConfigPassword("browser_token", "config_access_token", `On a machine with a browser, open:
+		return tokenPrompt("browser_token", "config_access_token", `Enter your IDrive web access token, not your account password.
+Rclone labels masked token input as a password. Choose y, then paste the same
+token at both password prompts. Do not generate a random password.
+
+On a machine with a browser, open:
 https://www.idrive.com/app/webconsole/drive/all/
 Sign in and unlock Cloud Drive if it uses a private key.
 In DevTools -> Console run:
@@ -79,7 +83,8 @@ If the result is null, finish signing in and open Cloud Drive, then try again.`)
 
 	case "manual_endpoint":
 		m.Set("endpoint", in.Result)
-		return fs.ConfigPassword("manual_token", "config_token", "Cloud Drive token.")
+		return tokenPrompt("manual_token", "config_token", `Enter your Cloud Drive token, not your account password.
+Rclone labels masked token input as a password. Choose y and paste the same token at both password prompts. Do not generate a random password.`)
 	case "manual_token":
 		token, err := obscure.Reveal(in.Result)
 		if err != nil {
@@ -94,6 +99,14 @@ If the result is null, finish signing in and open Cloud Drive, then try again.`)
 		return nil, nil
 	}
 	return nil, errors.New("idrive: unknown configuration state")
+}
+
+func tokenPrompt(state, name, help string) (*fs.ConfigOut, error) {
+	out, err := fs.ConfigPassword(state, name, help)
+	if err == nil {
+		out.Option.Required = true
+	}
+	return out, err
 }
 
 func finishBrowserConfig(ctx context.Context, m configmap.Mapper, access string) (*fs.ConfigOut, error) {
